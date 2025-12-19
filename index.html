@@ -8,21 +8,25 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
   <style>
-    body { font-family: Arial, sans-serif; margin: 22px; }
-    .row { display:flex; gap:14px; flex-wrap:wrap; align-items:center; }
+    body { font-family: Arial, sans-serif; margin: 22px; color:#111; }
+    .row { display:flex; gap:14px; flex-wrap:wrap; align-items:flex-start; }
+    .card { border:1px solid #e6e6e6; border-radius:12px; padding:14px; background:#fff; }
     button { padding:10px 14px; border-radius:10px; border:0; background:#0ea5e9; color:#fff; font-weight:700; cursor:pointer; }
     button:disabled{ opacity:.5; cursor:not-allowed; }
-    .card { border:1px solid #e6e6e6; border-radius:12px; padding:14px; background:#fff; }
+    select, input { padding:8px; border-radius:10px; border:1px solid #ddd; width: 320px; }
+    label{ font-size:12px; color:#333; }
+    .muted{ color:#666; font-size:12px; }
+    .warn { color:#b91c1c; font-weight:700; }
+    .ok { color:#15803d; font-weight:700; }
     #plotWrap { border:1px solid #e6e6e6; border-radius:12px; padding:10px; margin-top:14px; background:#fff; }
     #plotSvg { width: 100%; overflow:auto; }
-    pre { background:#111; color:#eee; padding:12px; border-radius:10px; overflow:auto; max-height:220px; }
-    .muted{ color:#666; font-size:12px; }
+    pre { background:#111; color:#eee; padding:12px; border-radius:10px; overflow:auto; max-height:240px; }
   </style>
 </head>
 <body>
 
 <h2 style="margin:0 0 6px 0;">ANOVA 2 factores — gráfico hecho en R (webR)</h2>
-<div class="muted">El HTML solo muestra el SVG. El gráfico lo genera ggplot2 dentro de webR.</div>
+<div class="muted">Ahora el app no exige nombres fijos: tú mapeas columnas y R renombra internamente.</div>
 
 <div class="row" style="margin-top:12px;">
   <div class="card">
@@ -36,7 +40,21 @@
   </div>
 
   <div class="card">
-    <button id="btnRun" disabled>2) Generar gráfico en R</button>
+    <div class="muted" style="margin-bottom:8px;"><b>2) Mapeo de columnas</b></div>
+
+    <label>Tratamiento (Factor A)</label><br/>
+    <select id="colTrat"></select><br/><br/>
+
+    <label>Factor B (tiempo / temperatura / días / etc.)</label><br/>
+    <select id="colFB"></select><br/><br/>
+
+    <label>Atributo (ej. “% Consumo”, “Peso Seco (g)”, etc.)</label><br/>
+    <select id="colAtrib"></select><br/><br/>
+
+    <label>Variable numérica</label><br/>
+    <select id="colVal"></select><br/><br/>
+
+    <button id="btnRun" disabled>3) Generar gráfico en R</button>
     <div id="runMsg" class="muted" style="margin-top:8px;"></div>
   </div>
 </div>
@@ -56,6 +74,7 @@
   let webR = null;
   let ready = false;
   let rawRows = [];
+  let cols = [];
 
   const btnInit = document.getElementById("btnInit");
   const btnRun  = document.getElementById("btnRun");
@@ -65,26 +84,43 @@
   const rout    = document.getElementById("rout");
   const plotSvg = document.getElementById("plotSvg");
 
+  const colTrat = document.getElementById("colTrat");
+  const colFB   = document.getElementById("colFB");
+  const colAtrib= document.getElementById("colAtrib");
+  const colVal  = document.getElementById("colVal");
+
+  function setOptions(sel, arr){
+    sel.innerHTML = "";
+    arr.forEach(c => {
+      const o = document.createElement("option");
+      o.value = c; o.textContent = c;
+      sel.appendChild(o);
+    });
+  }
+
   btnInit.addEventListener("click", async () => {
     try {
       webrMsg.textContent = "Inicializando webR...";
       webR = new WebR();
       await webR.init();
       ready = true;
-      webrMsg.textContent = "✅ webR listo.";
+      webrMsg.innerHTML = `<span class="ok">✅ webR listo.</span>`;
       if (rawRows.length) btnRun.disabled = false;
     } catch (e) {
-      webrMsg.textContent = "❌ " + e.message;
+      webrMsg.innerHTML = `<span class="warn">❌</span> ${e.message}`;
     }
   });
 
-  document.getElementById("fileInput").addEventListener("change", async (e) => {
+  document.getElementById("fileInput").addEventListener("change", (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
     rawRows = [];
+    cols = [];
     btnRun.disabled = true;
     plotSvg.textContent = "Aquí aparecerá el SVG generado por R…";
     rout.textContent = "---";
+    runMsg.textContent = "";
 
     const ext = file.name.toLowerCase().split(".").pop();
     const reader = new FileReader();
@@ -99,10 +135,24 @@
           rawRows = XLSX.utils.sheet_to_json(ws, { defval: "" });
         }
         if (!rawRows.length) throw new Error("Archivo vacío.");
-        fileMsg.textContent = `✅ Cargado: ${file.name} | filas: ${rawRows.length}`;
+        cols = Object.keys(rawRows[0]);
+        if (!cols.length) throw new Error("No se detectaron columnas.");
+
+        setOptions(colTrat, cols);
+        setOptions(colFB, cols);
+        setOptions(colAtrib, cols);
+        setOptions(colVal, cols);
+
+        // Heurística: autoselección si existe "tratamiento"
+        autoPick(colTrat, ["tratamiento","treatment"]);
+        autoPick(colFB,   ["tiempo","time","temperatura","temp","dias","día","day","semana","week"]);
+        autoPick(colAtrib,["atributo","attr","variable_name","metric"]);
+        autoPick(colVal,  ["valor","value","variable","y"]);
+
+        fileMsg.innerHTML = `<span class="ok">✅</span> Cargado: <b>${file.name}</b> | filas: ${rawRows.length} | cols: ${cols.length}`;
         if (ready) btnRun.disabled = false;
       } catch (err) {
-        fileMsg.textContent = "❌ " + err.message;
+        fileMsg.innerHTML = `<span class="warn">❌</span> ${err.message}`;
       }
     };
 
@@ -110,66 +160,73 @@
     else reader.readAsBinaryString(file);
   });
 
+  function autoPick(selectEl, candidates){
+    const lower = cols.map(c => c.toLowerCase());
+    for (const cand of candidates){
+      const idx = lower.findIndex(x => x === cand || x.includes(cand));
+      if (idx >= 0) { selectEl.value = cols[idx]; return; }
+    }
+  }
+
   btnRun.addEventListener("click", async () => {
     try {
       if (!ready) throw new Error("Inicializa webR primero.");
       if (!rawRows.length) throw new Error("Carga un archivo primero.");
 
+      const cTrat = colTrat.value;
+      const cFB   = colFB.value;
+      const cA    = colAtrib.value;
+      const cV    = colVal.value;
+
+      if (!cTrat || !cFB || !cA || !cV) throw new Error("Completa el mapeo de columnas.");
+
       runMsg.textContent = "Ejecutando R y generando SVG...";
       rout.textContent = "---";
 
-      // Esperado (LONG) en este ejemplo:
-      // Tratamiento, FactorB, Atributo, Variable
-      // (si quieres WIDE, lo pivoteamos también, pero primero lo dejamos simple)
-      const csv = toCSV(rawRows);
+      // Construir un CSV “normalizado” para R con nombres estándar
+      const normalized = rawRows.map(r => ({
+        Tratamiento: r[cTrat],
+        FactorB: r[cFB],
+        Atributo: r[cA],
+        Variable: r[cV]
+      }));
+
+      const csv = toCSV(normalized);
 
       const rcode = `
-        # ---- leer datos ----
         df <- read.csv(text=${JSON.stringify(csv)}, stringsAsFactors=FALSE)
 
-        # Normalizar nombres esperados
-        # Requeridos: Tratamiento, FactorB, Atributo, Variable
-        # Si tu CSV viene con otros nombres, los renombramos aquí.
-        if(!("Tratamiento" %in% names(df))) stop("Falta columna: Tratamiento")
-        if(!("FactorB" %in% names(df))) stop("Falta columna: FactorB")
-        if(!("Atributo" %in% names(df))) stop("Falta columna: Atributo")
-        if(!("Variable" %in% names(df))) stop("Falta columna: Variable")
-
-        df$Tratamiento <- as.factor(as.character(df$Tratamiento))  # ✅ texto/categoría
-        df$FactorB     <- as.factor(as.character(df$FactorB))      # ✅ texto/categoría
+        df$Tratamiento <- as.factor(as.character(df$Tratamiento)) # ✅ categorías aunque sean números
+        df$FactorB     <- as.factor(as.character(df$FactorB))
         df$Atributo    <- as.character(df$Atributo)
-        df$Variable    <- suppressWarnings(as.numeric(df$Variable))
+        df$Variable    <- suppressWarnings(as.numeric(as.character(df$Variable)))
 
-        df <- df[is.finite(df$Variable), ]
-        if(nrow(df) < 4) stop("Muy pocos datos numéricos en Variable.")
+        df <- df[is.finite(df$Variable) & df$Tratamiento!="" & df$FactorB!="" & df$Atributo!="", ]
+        if(nrow(df) < 4) stop("Muy pocos datos válidos en Variable (numérica).")
 
-        # Elegir atributo: el primero (puedes luego hacer selector)
         attr_sel <- unique(df$Atributo)[1]
         d2 <- df[df$Atributo == attr_sel, ]
+
         if(length(levels(d2$Tratamiento)) < 2 || length(levels(d2$FactorB)) < 2){
-          stop("Se requieren ≥2 niveles en Tratamiento y FactorB para el atributo.")
+          stop("Se requieren ≥2 niveles en Tratamiento y FactorB para el atributo seleccionado.")
         }
 
-        # ---- stats (base R) ----
-        m <- lm(Variable ~ Tratamiento * FactorB, data=d2)
-        p_norm <- tryCatch(shapiro.test(residuals(m))$p.value, error=function(e) NA_real_)
-        tab <- anova(m)
-
-        # ---- plot (ggplot2) ----
-        # webR normalmente incluye ggplot2, pero si falla, te lo mostrará en consola.
         suppressWarnings(library(ggplot2))
 
-        # Tabla tipo "stats_cell" (base R)
+        # Modelo
+        m <- lm(Variable ~ Tratamiento * FactorB, data=d2)
+        p_norm <- tryCatch(shapiro.test(residuals(m))$p.value, error=function(e) NA_real_)
+
+        # stats por celda
         agg <- aggregate(Variable ~ Tratamiento + FactorB, d2, function(x){
           c(n=length(x), mean=mean(x), median=median(x), sd=sd(x),
             cv=100*sd(x)/mean(x), ymin=min(x), ymax=max(x))
         })
-        # expandir columnas
         agg2 <- data.frame(agg[1:2], do.call(rbind, agg$Variable))
         names(agg2) <- c("Tratamiento","FactorB","n","mean","median","sd","cv","ymin","ymax")
 
         rng <- diff(range(d2$Variable, na.rm=TRUE)); if(!is.finite(rng) || rng==0) rng <- 1
-        TOP_OFF <- 0.06*rng; BOT_OFF <- 0.06*rng; LET_OFF <- 0.12*rng
+        TOP_OFF <- 0.06*rng; BOT_OFF <- 0.06*rng
 
         agg2$y_top_median <- agg2$ymax + TOP_OFF*2
         agg2$y_top_mean   <- agg2$ymax + TOP_OFF
@@ -177,7 +234,6 @@
         agg2$y_bot_cv     <- agg2$ymin - BOT_OFF
         agg2$y_bot_n      <- agg2$ymin
 
-        # Texto subtítulo
         fmt <- function(x) ifelse(is.na(x), "NA", formatC(x, digits=3, format="f"))
         subtxt <- paste0("ANOVA base | Shapiro p=", fmt(p_norm))
 
@@ -214,28 +270,25 @@
           ) +
           coord_cartesian(clip="off")
 
-        # ---- export SVG a FS virtual de webR ----
         svg("plot.svg", width=12, height=7)
         print(g)
         dev.off()
 
         cat("OK: plot.svg generado\\n")
+        cat("Atributo usado: ", attr_sel, "\\n", sep="")
       `;
 
       await webR.evalRVoid(rcode);
       const flushed = await webR.flush();
-      const outText = flushed.map(x => x.data).join("");
-      rout.textContent = outText;
+      rout.textContent = flushed.map(x => x.data).join("");
 
-      // Leer el SVG desde el FS de webR
       const bytes = webR.FS.readFile("plot.svg");
       const svgText = new TextDecoder("utf-8").decode(bytes);
-
-      // Insertar SVG (100% generado por R)
       plotSvg.innerHTML = svgText;
-      runMsg.textContent = "✅ Gráfico generado en R y renderizado como SVG.";
+
+      runMsg.innerHTML = `<span class="ok">✅</span> Gráfico generado en R y renderizado como SVG.`;
     } catch (e) {
-      runMsg.textContent = "❌ " + e.message;
+      runMsg.innerHTML = `<span class="warn">❌</span> ${e.message}`;
     }
   });
 
