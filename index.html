@@ -1,60 +1,692 @@
 <!doctype html>
 <html lang="es">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>anova_two_way — webR demo</title>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 22px; }
-    textarea { width: 100%; height: 180px; }
-    pre { background: #111; color: #eee; padding: 12px; border-radius: 10px; overflow:auto; }
-    button { padding: 10px 14px; border-radius: 10px; border: 0; background:#0ea5e9; color:#fff; font-weight:700; cursor:pointer; }
-    .muted { color:#666; font-size:12px; }
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>anova_two_way — webR + Plotly</title>
+
+<script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+<style>
+  body { font-family: Arial, sans-serif; margin: 22px; color:#111; }
+  .row { display:flex; gap:18px; flex-wrap:wrap; }
+  .card { border:1px solid #e6e6e6; border-radius:12px; padding:14px; background:#fff; box-shadow:0 2px 10px rgba(0,0,0,.04); }
+  .card h3 { margin:0 0 10px 0; font-size:16px; }
+  label { font-size: 12px; color:#333; }
+  select, input, button { padding: 8px; border-radius:10px; border:1px solid #ddd; }
+  select, input { width: 360px; }
+  button { cursor:pointer; width:auto; padding:10px 14px; border:0; background:#0ea5e9; color:#fff; font-weight:700; }
+  button:hover{ filter:brightness(.95); }
+  #plot { width:100%; height:720px; }
+  .muted { color:#666; font-size:12px; }
+  .warn { color:#b91c1c; font-weight:700; }
+  .ok { color:#15803d; font-weight:700; }
+  .btnrow { margin-top:10px; display:flex; gap:10px; flex-wrap:wrap; }
+  pre { background:#111; color:#eee; padding:12px; border-radius:10px; overflow:auto; max-height:220px; }
+</style>
 </head>
+
 <body>
+<h2 style="margin:0 0 6px 0;">ANOVA 2 factores — Tratamiento × Factor B (webR + Plotly)</h2>
+<div class="muted">
+  Factor B puede ser cualquier variable (tiempo, temperatura, condición, etc.).<br/>
+  CSV con <b>,</b> o <b>;</b> (auto-detect), Excel ok.
+</div>
 
-<h2>webR (R en el navegador) — prueba rápida</h2>
-<div class="muted">Esto corre R en el browser (sin servidor). Ideal para GitHub Pages.</div>
+<div class="row" style="margin-top:14px;">
+  <div class="card">
+    <h3>0) webR</h3>
+    <button id="btnInit">Inicializar webR</button>
+    <div id="webrMsg" class="muted" style="margin-top:8px;"></div>
+    <div class="muted">Tip: inicializa una vez y luego ya corre rápido.</div>
+  </div>
 
-<p><button id="btnInit">1) Inicializar webR</button></p>
+  <div class="card">
+    <h3>1) Carga</h3>
+    <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" />
+    <div id="fileMsg" class="muted" style="margin-top:8px;"></div>
 
-<p><textarea id="rcode">
-x <- rnorm(10)
-summary(x)
-</textarea></p>
+    <div class="btnrow">
+      <button type="button" onclick="downloadExampleCSV()">Ejemplo (CSV)</button>
+    </div>
+  </div>
 
-<p><button id="btnRun" disabled>2) Ejecutar R</button></p>
+  <div class="card">
+    <h3>2) Mapeo</h3>
 
-<pre id="out">Salida...</pre>
+    <label>Columna Tratamiento (Factor A)</label><br/>
+    <select id="colTrat"></select><br/><br/>
+
+    <label>Columna Factor B (variable de comparación)</label><br/>
+    <select id="colFB"></select><br/><br/>
+
+    <label>Modo de datos</label><br/>
+    <select id="mode">
+      <option value="wide">WIDE (var_1, var_2, ...)</option>
+      <option value="long">LONG (Atributo + Variable)</option>
+    </select><br/><br/>
+
+    <div id="longCols" style="display:none;">
+      <label>Columna Atributo</label><br/>
+      <select id="colAtrib"></select><br/><br/>
+
+      <label>Columna Variable (numérica)</label><br/>
+      <select id="colVal"></select><br/><br/>
+    </div>
+
+    <button id="btnPrep" disabled>Preparar dataset</button>
+    <div id="prepMsg" class="muted" style="margin-top:8px;"></div>
+  </div>
+
+  <div class="card">
+    <h3>3) Graficar</h3>
+
+    <label>Atributo</label><br/>
+    <select id="attrSel"></select><br/><br/>
+
+    <button id="btnPlot" disabled>ANOVA + Gráfico</button>
+    <div id="plotMsg" class="muted" style="margin-top:8px;"></div>
+  </div>
+</div>
+
+<div class="card" style="margin-top:16px;">
+  <div id="plot"></div>
+</div>
+
+<div class="card" style="margin-top:16px;">
+  <h3>Salida R (debug)</h3>
+  <pre id="rout">---</pre>
+</div>
 
 <script type="module">
-  // webR oficial (CDN). Ejemplos en docs.
-  // Nota: esto es ESM (type="module") y funciona en GitHub Pages.
-  import { WebR } from "https://webr.r-wasm.org/latest/webr.mjs"; // :contentReference[oaicite:1]{index=1}
+import { WebR } from "https://webr.r-wasm.org/latest/webr.mjs";
 
-  const out = document.getElementById("out");
-  const btnInit = document.getElementById("btnInit");
-  const btnRun = document.getElementById("btnRun");
-  const rcode = document.getElementById("rcode");
+let webR = null;
+let webrReady = false;
 
-  const webR = new WebR();
+let raw = [];
+let longDF = []; // {Tratamiento, FactorB, Atributo, Variable}
 
-  btnInit.addEventListener("click", async () => {
-    out.textContent = "Inicializando webR...";
+const fileMsg = document.getElementById("fileMsg");
+const prepMsg = document.getElementById("prepMsg");
+const plotMsg = document.getElementById("plotMsg");
+const rout = document.getElementById("rout");
+
+const btnInit = document.getElementById("btnInit");
+const btnPrep = document.getElementById("btnPrep");
+const btnPlot = document.getElementById("btnPlot");
+const webrMsg = document.getElementById("webrMsg");
+
+const mode = document.getElementById("mode");
+const longColsDiv = document.getElementById("longCols");
+mode.addEventListener("change", () => {
+  longColsDiv.style.display = mode.value === "long" ? "block" : "none";
+});
+
+btnInit.addEventListener("click", async () => {
+  try{
+    webrMsg.innerHTML = "Inicializando webR...";
+    webR = new WebR();
     await webR.init();
-    out.textContent = "✅ webR listo. Ahora puedes ejecutar R.";
-    btnRun.disabled = false;
+    webrReady = true;
+    webrMsg.innerHTML = `<span class="ok">✅ webR listo.</span>`;
+  } catch(e){
+    webrMsg.innerHTML = `<span class="warn">Error:</span> ${e.message}`;
+  }
+});
+
+function setSelectOptions(selectEl, cols) {
+  selectEl.innerHTML = "";
+  cols.forEach(c => {
+    const opt = document.createElement("option");
+    opt.value = c; opt.textContent = c;
+    selectEl.appendChild(opt);
+  });
+}
+
+document.getElementById("fileInput").addEventListener("change", (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+
+  resetStateKeepWebR();
+
+  const ext = file.name.toLowerCase().split(".").pop();
+  const reader = new FileReader();
+
+  reader.onload = (evt) => {
+    try {
+      if (ext === "csv") {
+        raw = csvToJsonAuto(evt.target.result);
+      } else {
+        const wb = XLSX.read(evt.target.result, { type: "binary" });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        raw = XLSX.utils.sheet_to_json(ws, { defval: null });
+      }
+      if (!raw.length) throw new Error("Archivo vacío.");
+
+      const cols = Object.keys(raw[0]);
+      setSelectOptions(document.getElementById("colTrat"), cols);
+      setSelectOptions(document.getElementById("colFB"), cols);
+      setSelectOptions(document.getElementById("colAtrib"), cols);
+      setSelectOptions(document.getElementById("colVal"), cols);
+
+      fileMsg.innerHTML = `✅ Cargado: <b>${file.name}</b> | filas: ${raw.length} | columnas: ${cols.length}`;
+      btnPrep.disabled = false;
+    } catch (err) {
+      fileMsg.innerHTML = `<span class="warn">Error:</span> ${err.message}`;
+    }
+  };
+
+  if (ext === "csv") reader.readAsText(file);
+  else reader.readAsBinaryString(file);
+});
+
+function resetStateKeepWebR(){
+  raw = [];
+  longDF = [];
+  btnPrep.disabled = true;
+  btnPlot.disabled = true;
+  document.getElementById("attrSel").innerHTML = "";
+  prepMsg.textContent = "";
+  plotMsg.textContent = "";
+  fileMsg.textContent = "";
+  Plotly.purge("plot");
+  rout.textContent = "---";
+}
+
+btnPrep.addEventListener("click", () => {
+  try{
+    longDF = [];
+    btnPlot.disabled = true;
+    prepMsg.textContent = "";
+
+    const cTrat = document.getElementById("colTrat").value;
+    const cFB   = document.getElementById("colFB").value;
+    if (!cTrat || !cFB) throw new Error("Selecciona Tratamiento y Factor B.");
+
+    if (mode.value === "wide") {
+      const cols = Object.keys(raw[0]);
+      const attrCols = cols.filter(c => c !== cTrat && c !== cFB);
+      if (!attrCols.length) throw new Error("No hay columnas de variables para pivotear (WIDE).");
+
+      raw.forEach(r => {
+        const trat = r[cTrat];
+        const fb = r[cFB];
+        attrCols.forEach(a => {
+          longDF.push({
+            Tratamiento: String(trat ?? ""),
+            FactorB: String(fb ?? ""),
+            Atributo: String(a),
+            Variable: toNum(r[a])
+          });
+        });
+      });
+    } else {
+      const cAtrib = document.getElementById("colAtrib").value;
+      const cVal   = document.getElementById("colVal").value;
+      if (!cAtrib || !cVal) throw new Error("Selecciona Atributo y Variable (LONG).");
+
+      raw.forEach(r => {
+        longDF.push({
+          Tratamiento: String(r[cTrat] ?? ""),
+          FactorB: String(r[cFB] ?? ""),
+          Atributo: String(r[cAtrib] ?? ""),
+          Variable: toNum(r[cVal])
+        });
+      });
+    }
+
+    longDF = longDF.filter(d =>
+      d.Tratamiento.length && d.FactorB.length && d.Atributo.length && Number.isFinite(d.Variable)
+    );
+
+    if (!longDF.length) throw new Error("No quedaron filas válidas (revisa Variable numérica).");
+
+    const attrs = [...new Set(longDF.map(d => d.Atributo))].sort();
+    setSelectOptions(document.getElementById("attrSel"), attrs);
+
+    prepMsg.innerHTML = `✅ Dataset LONG listo | filas: ${longDF.length} | atributos: ${attrs.length}`;
+    btnPlot.disabled = false;
+  } catch(e){
+    prepMsg.innerHTML = `<span class="warn">Error:</span> ${e.message}`;
+  }
+});
+
+btnPlot.addEventListener("click", async () => {
+  try{
+    if (!webrReady) throw new Error("Inicializa webR primero (botón 0).");
+    Plotly.purge("plot");
+    plotMsg.textContent = "";
+    rout.textContent = "---";
+
+    const attr = document.getElementById("attrSel").value;
+    if (!attr) throw new Error("Selecciona un atributo.");
+
+    const data2 = longDF.filter(d => d.Atributo === attr);
+    const trats = [...new Set(data2.map(d => d.Tratamiento))];
+    const fbs   = [...new Set(data2.map(d => d.FactorB))];
+    if (trats.length < 2 || fbs.length < 2) {
+      throw new Error("Se requieren ≥2 niveles en Tratamiento y Factor B para este atributo.");
+    }
+
+    // ---------- 1) stats por celda (JS) ----------
+    const cellStats = computeCellStats(data2);
+
+    const vals = data2.map(d => d.Variable);
+    let rng = (Math.max(...vals) - Math.min(...vals));
+    if (!isFinite(rng) || rng === 0) rng = Math.max(1, Math.abs(mean(vals))*0.1);
+    const TOP_OFF = 0.06 * rng;
+    const BOT_OFF = 0.06 * rng;
+
+    cellStats.forEach(s => {
+      s.y_top_median = s.y_max + TOP_OFF*2;
+      s.y_top_mean   = s.y_max + TOP_OFF;
+      s.y_bot_sd     = s.y_min - BOT_OFF*2;
+      s.y_bot_cv     = s.y_min - BOT_OFF;
+      s.y_bot_n      = s.y_min - BOT_OFF*0.0;
+    });
+
+    const y_low  = Math.min(...cellStats.map(s => s.y_min - BOT_OFF*2));
+    const y_high = Math.max(...cellStats.map(s => s.y_max + TOP_OFF*3));
+
+    // ---------- 2) correr R (webR) ----------
+    // Armamos CSV LONG para R (con ; o , da igual, aquí mandamos coma)
+    const csv = toCSVLongForR(data2); // columns: Tratamiento,FactorB,Variable
+    const rcode = `
+      df <- read.csv(text=${jsonQuote(csv)}, stringsAsFactors=FALSE)
+      df$Tratamiento <- factor(as.character(df$Tratamiento))
+      df$FactorB     <- factor(as.character(df$FactorB))
+      df$Variable    <- as.numeric(df$Variable)
+
+      # modelo 2 vías base
+      m <- lm(Variable ~ Tratamiento * FactorB, data=df)
+
+      # shapiro
+      p_norm <- tryCatch(shapiro.test(residuals(m))$p.value, error=function(e) NA_real_)
+
+      # "levene-like" base R: ANOVA sobre abs dev contra mediana por grupo combinado
+      g <- interaction(df$Tratamiento, df$FactorB, drop=TRUE)
+      med <- tapply(df$Variable, g, median, na.rm=TRUE)
+      z <- abs(df$Variable - med[g])
+      p_lev <- tryCatch(summary(aov(z ~ g))[[1]][1,"Pr(>F)"], error=function(e) NA_real_)
+
+      # ANOVA (Type I base)
+      tab <- anova(m)
+      getp <- function(term){
+        if(!(term %in% rownames(tab))) return(NA_real_)
+        as.numeric(tab[term,"Pr(>F)"])
+      }
+      p_trat <- getp("Tratamiento")
+      p_fb   <- getp("FactorB")
+      p_int  <- getp("Tratamiento:FactorB")
+
+      # Tukey sobre fac combinado
+      df$fac <- interaction(df$Tratamiento, df$FactorB, drop=TRUE)
+      a1 <- aov(Variable ~ fac, data=df)
+      tk <- TukeyHSD(a1, "fac")$fac
+      tkdf <- data.frame(comp=rownames(tk), p_adj=tk[,"p adj"], stringsAsFactors=FALSE)
+
+      cat("===STATS===\\n")
+      cat(paste("p_norm", p_norm, sep="\\t"), "\\n")
+      cat(paste("p_lev",  p_lev,  sep="\\t"), "\\n")
+      cat(paste("p_trat", p_trat, sep="\\t"), "\\n")
+      cat(paste("p_fb",   p_fb,   sep="\\t"), "\\n")
+      cat(paste("p_int",  p_int,  sep="\\t"), "\\n")
+
+      cat("===TUKEY===\\n")
+      # comp \\t p_adj
+      for(i in seq_len(nrow(tkdf))){
+        cat(tkdf$comp[i], "\\t", tkdf$p_adj[i], "\\n", sep="")
+      }
+    `;
+
+    await webR.evalRVoid(rcode);
+    const flushed = await webR.flush();
+    const outText = flushed.map(x => x.data).join("");
+    rout.textContent = outText;
+
+    const parsed = parseROut(outText);
+    const stats = parsed.stats;
+    const tukey = parsed.tukey;
+
+    // ---------- 3) letras (JS) desde p_adj de Tukey ----------
+    const lettersByFac = compactLettersFromTukey(tukey, 0.05); // fac -> letter(s)
+
+    // mapeo letras a (Tratamiento, FactorB)
+    const letras_df = cellStats.map(s => {
+      const fac = `${s.Tratamiento}.${s.FactorB}`;
+      return {
+        Tratamiento: s.Tratamiento,
+        FactorB: s.FactorB,
+        letra: lettersByFac[fac] ?? "",
+        y: s.y_max + TOP_OFF*3
+      };
+    });
+
+    // ---------- 4) plot ----------
+    const traces = buildBoxTraces(data2, fbs);
+    const meanPts = buildMeanPoints(cellStats);
+    const textTraces = buildTextTraces(cellStats);
+    const leftLabels = buildLeftLabels(cellStats);
+    const letterTrace = {
+      type:"scatter", mode:"text", showlegend:false,
+      x: letras_df.map(d => String(d.Tratamiento)),
+      y: letras_df.map(d => d.y),
+      text: letras_df.map(d => d.letra),
+      textfont: {size: 18, family:"Arial", color:"#111"},
+      textposition:"middle center"
+    };
+
+    const subtxt =
+      `ANOVA (base R) | Shapiro p=${fmt(stats.p_norm)} | Levene-like p=${fmt(stats.p_lev)} | ` +
+      `p(Trat)=${fmt(stats.p_trat)} | p(FactorB)=${fmt(stats.p_fb)} | p(Int)=${fmt(stats.p_int)}`;
+
+    const layout = {
+      title: { text: `ANOVA de dos factores: Tratamiento × Factor B — ${escapeHtml(attr)}<br><span style="font-size:12px;">${escapeHtml(subtxt)}</span>`, x:0.5 },
+      paper_bgcolor: "white",
+      plot_bgcolor: "white",
+      xaxis: {
+        title: "Tratamiento (Factor A)",
+        type: "category",               // ✅ SIEMPRE TEXTO
+        showline:true, linewidth:1, linecolor:"#111", tickcolor:"#111"
+      },
+      yaxis: {
+        title: attr,
+        range:[y_low, y_high],
+        showline:true, linewidth:1, linecolor:"#111", tickcolor:"#111",
+        gridcolor:"#eaeaea"
+      },
+      boxmode: "group",
+      legend: { orientation:"v", x:1.02, y:1, title:{text:"Factor B"} },
+      margin: { t: 110, r: 150, b: 60, l: 80 }
+    };
+
+    Plotly.newPlot("plot",
+      [...traces, meanPts, ...textTraces, letterTrace, ...leftLabels],
+      layout,
+      {displayModeBar:true, responsive:true}
+    );
+
+    plotMsg.innerHTML = `✅ Listo: <b>${escapeHtml(attr)}</b> (stats en webR)`;
+  } catch(e){
+    plotMsg.innerHTML = `<span class="warn">Error:</span> ${e.message}`;
+  }
+});
+
+// -------------------- Plot helpers --------------------
+function buildBoxTraces(data2, fbs) {
+  return fbs.map(fb0 => {
+    const fb = String(fb0);
+    const x = [];
+    const y = [];
+    data2.forEach(d => {
+      if (String(d.FactorB) === fb) {
+        x.push(String(d.Tratamiento));  // ✅ texto
+        y.push(d.Variable);
+      }
+    });
+    return { type:"box", name:fb, x, y, boxpoints:false, marker:{opacity:0.85}, line:{width:1} };
+  });
+}
+
+function buildMeanPoints(cellStats) {
+  return {
+    type:"scatter", mode:"markers", name:"mean",
+    x: cellStats.map(s => String(s.Tratamiento)),
+    y: cellStats.map(s => s.mean),
+    hoverinfo:"skip",
+    marker:{size:8, symbol:"circle-open", color:"black", line:{width:2}}
+  };
+}
+
+function buildTextTraces(cellStats) {
+  const mk = (yKey, labelFn, size) => ({
+    type:"scatter", mode:"text", showlegend:false,
+    x: cellStats.map(s => String(s.Tratamiento)),
+    y: cellStats.map(s => s[yKey]),
+    text: cellStats.map(s => labelFn(s)),
+    textposition:"middle center",
+    textfont:{size}
+  });
+  return [
+    mk("y_top_median", s => round(s.median,2), 12),
+    mk("y_top_mean",   s => round(s.mean,2),   12),
+    mk("y_bot_n",      s => String(s.n),       12),
+    mk("y_bot_cv",     s => round(s.cv,1),     11),
+    mk("y_bot_sd",     s => round(s.sd,2),     11),
+  ];
+}
+
+function buildLeftLabels(cellStats) {
+  const x0 = String(cellStats[0].Tratamiento);
+  const yTopMed = Math.max(...cellStats.map(s => s.y_top_median));
+  const yTopMean= Math.max(...cellStats.map(s => s.y_top_mean));
+  const yBotN   = Math.min(...cellStats.map(s => s.y_bot_n));
+  const yBotCV  = Math.min(...cellStats.map(s => s.y_bot_cv));
+  const yBotSD  = Math.min(...cellStats.map(s => s.y_bot_sd));
+  return [
+    {type:"scatter", mode:"text", showlegend:false, x:[x0], y:[yTopMed], text:["median"], textfont:{size:11}},
+    {type:"scatter", mode:"text", showlegend:false, x:[x0], y:[yTopMean],text:["mean"],   textfont:{size:11}},
+    {type:"scatter", mode:"text", showlegend:false, x:[x0], y:[yBotN],   text:["n"],      textfont:{size:11}},
+    {type:"scatter", mode:"text", showlegend:false, x:[x0], y:[yBotCV],  text:["cv"],     textfont:{size:11}},
+    {type:"scatter", mode:"text", showlegend:false, x:[x0], y:[yBotSD],  text:["sd"],     textfont:{size:11}}
+  ];
+}
+
+function computeCellStats(data2) {
+  const g = groupBy(data2, d => `${d.Tratamiento}|${d.FactorB}`);
+  const out = [];
+  Object.entries(g).forEach(([key, arr]) => {
+    const [trat, fb] = key.split("|");
+    const v = arr.map(a => a.Variable).filter(Number.isFinite);
+    const n = v.length;
+    const m = mean(v);
+    const med = median(v);
+    const sd = std(v);
+    const cv = (m !== 0 && isFinite(m)) ? (100*sd/m) : NaN;
+    out.push({
+      Tratamiento: trat,
+      FactorB: fb,
+      n, mean:m, median:med, sd, cv,
+      y_min: Math.min(...v),
+      y_max: Math.max(...v)
+    });
+  });
+  return out;
+}
+
+// -------------------- webR I/O parsing --------------------
+function parseROut(text){
+  const lines = text.split(/\r?\n/);
+  const stats = {};
+  const tukey = [];
+  let mode = null;
+  for (const ln of lines){
+    if (ln.startsWith("===STATS===")) { mode="stats"; continue; }
+    if (ln.startsWith("===TUKEY===")) { mode="tukey"; continue; }
+    if (!ln.trim()) continue;
+
+    if (mode === "stats"){
+      const [k,v] = ln.split("\t");
+      stats[k] = Number(v);
+    } else if (mode === "tukey"){
+      const [comp, p] = ln.split("\t");
+      if (comp && p !== undefined) tukey.push({comp, p_adj:Number(p)});
+    }
+  }
+  return {stats, tukey};
+}
+
+function fmt(x){
+  if (!isFinite(x)) return "NA";
+  return x.toFixed(3);
+}
+
+// -------------------- Compact letters (simple CLD) --------------------
+// Greedy CLD: construye incompatibilidades desde Tukey p_adj < alpha
+function compactLettersFromTukey(tukeyRows, alpha=0.05){
+  // get all groups appearing in comparisons "A.B1-B.B2"
+  const groups = new Set();
+  const sig = new Map(); // key "g1|g2" => true if significant
+
+  for (const r of tukeyRows){
+    const [a,b] = r.comp.split("-");
+    if (!a || !b) continue;
+    groups.add(a); groups.add(b);
+    const g1 = a.trim(), g2 = b.trim();
+    if (isFinite(r.p_adj) && r.p_adj < alpha){
+      sig.set(pairKey(g1,g2), true);
+      sig.set(pairKey(g2,g1), true);
+    }
+  }
+
+  const gs = [...groups].sort();
+  if (!gs.length) return {};
+
+  // graph coloring style letters (very compact, works well for typical Tukey outputs)
+  const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  const assigned = {}; // group -> string
+
+  const classes = []; // each class is Set(groups) that are NOT significantly different from each other
+  for (const g of gs){
+    let placed = false;
+    for (const cls of classes){
+      // can g join cls if not significant with all members
+      let ok = true;
+      for (const h of cls){
+        if (sig.get(pairKey(g,h))) { ok=false; break; }
+      }
+      if (ok){
+        cls.add(g);
+        placed = true;
+        break;
+      }
+    }
+    if (!placed){
+      classes.push(new Set([g]));
+    }
+  }
+
+  // map classes to letters
+  classes.forEach((cls, i) => {
+    const L = letters[i] ?? "?";
+    for (const g of cls){
+      assigned[g] = (assigned[g] ?? "") + L;
+    }
   });
 
-  btnRun.addEventListener("click", async () => {
-    out.textContent = "Ejecutando R...";
-    // Captura salida estándar tipo consola:
-    await webR.evalRVoid(`capture.output({ ${rcode.value} }) |> paste(collapse="\\n") |> cat()`);
-    const text = await webR.flush();
-    // flush() devuelve lo que “imprimió” R (stdout/stderr)
-    out.textContent = text.map(x => x.data).join("");
+  return assigned;
+}
+
+function pairKey(a,b){ return `${a}|||${b}`; }
+
+// -------------------- CSV / Excel helpers --------------------
+function detectDelimiter(text) {
+  const lines = text.split(/\r?\n/).slice(0, 20).filter(l => l.trim().length);
+  if (!lines.length) return ",";
+  const score = (delim) => {
+    const counts = lines.map(l => l.split(delim).length);
+    const max = Math.max(...counts), min = Math.min(...counts);
+    return (max >= 2 ? max : 0) - (max - min);
+  };
+  const cand = [",", ";", "\t", "|"];
+  let best = cand[0], bestScore = -Infinity;
+  cand.forEach(d => { const s = score(d); if (s > bestScore) { bestScore=s; best=d; }});
+  return best;
+}
+function csvToJsonAuto(text) { return csvToJson(text, detectDelimiter(text)); }
+function csvToJson(text, delim) {
+  const lines = text.split(/\r?\n/).filter(l => l.trim().length);
+  const headers = lines[0].split(delim).map(h => h.trim());
+  const out = [];
+  for (let i=1; i<lines.length; i++){
+    const parts = lines[i].split(delim);
+    const row = {};
+    headers.forEach((h,idx)=> row[h] = (parts[idx] ?? "").trim());
+    out.push(row);
+  }
+  return out;
+}
+
+function toNum(x){
+  if (x == null || x === "") return NaN;
+  const s = String(x).trim().replace(",", "."); // 12,3 -> 12.3
+  const v = Number(s);
+  return Number.isFinite(v) ? v : NaN;
+}
+
+// CSV LONG para R (solo 3 cols)
+function toCSVLongForR(rows){
+  const head = "Tratamiento,FactorB,Variable\n";
+  const body = rows.map(r => {
+    const t = csvEsc(String(r.Tratamiento));
+    const b = csvEsc(String(r.FactorB));
+    const v = String(r.Variable);
+    return `${t},${b},${v}`;
+  }).join("\n");
+  return head + body + "\n";
+}
+function csvEsc(s){
+  if (s.includes(",") || s.includes('"') || s.includes("\n")) return `"${s.replace(/"/g,'""')}"`;
+  return s;
+}
+function jsonQuote(s){
+  // R: read.csv(text= "....") -> necesitamos string escapado como literal JSON
+  return JSON.stringify(s);
+}
+
+function groupBy(arr, keyFn) {
+  const obj = {};
+  arr.forEach(x => {
+    const k = keyFn(x);
+    (obj[k] = obj[k] || []).push(x);
   });
+  return obj;
+}
+function mean(a){ return a.reduce((s,x)=>s+x,0)/a.length; }
+function median(a){
+  const b = [...a].sort((x,y)=>x-y);
+  const n = b.length;
+  return n%2 ? b[(n-1)/2] : (b[n/2-1]+b[n/2])/2;
+}
+function std(a){
+  if (a.length < 2) return 0;
+  const m = mean(a);
+  const v = a.reduce((s,x)=>s+(x-m)*(x-m),0)/(a.length-1);
+  return Math.sqrt(v);
+}
+function round(x,d){
+  if (!isFinite(x)) return "NA";
+  const p = Math.pow(10,d);
+  return (Math.round(x*p)/p).toFixed(d);
+}
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+}
+
+// -------------------- Example download --------------------
+function downloadFile(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+function downloadExampleCSV(){
+  const csv =
+`tanque,tratamiento,factor_b,var_1,var_2
+R1,A,B1,10.5,3.2
+R1,A,B2,11.1,3.5
+R2,B,B1,12.0,4.0
+R2,B,B2,12.8,4.3
+`;
+  downloadFile(new Blob([csv], {type:"text/csv;charset=utf-8"}), "example_wide.csv");
+}
+window.downloadExampleCSV = downloadExampleCSV;
 </script>
 
 </body>
