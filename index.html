@@ -3,11 +3,9 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>ANOVA 2 factores: Boxplot estilo informe (HTML)</title>
+<title>ANOVA 2 factores: Tratamiento × Factor B (HTML)</title>
 
-<!-- Plotly -->
 <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
-<!-- SheetJS para Excel -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
 <style>
@@ -16,7 +14,7 @@
   .card { border:1px solid #e6e6e6; border-radius:12px; padding:14px; background:#fff; box-shadow: 0 2px 10px rgba(0,0,0,.04); }
   .card h3 { margin:0 0 10px 0; font-size:16px; }
   label { font-size: 12px; color:#333; }
-  select, input, button { width: 320px; padding: 8px; border-radius:10px; border:1px solid #ddd; }
+  select, input, button { width: 340px; padding: 8px; border-radius:10px; border:1px solid #ddd; }
   button { cursor:pointer; width:auto; padding:10px 14px; border:0; background:#0ea5e9; color:#fff; font-weight:700; }
   button:hover{ filter:brightness(.95); }
   #plot { width: 100%; height: 720px; }
@@ -27,8 +25,10 @@
 
 <body>
 
-<h2 style="margin:0 0 6px 0;">ANOVA de dos factores: Tratamiento × Tipo (HTML)</h2>
-<div class="muted">Sube Excel/CSV wide (tanque, tratamiento, tiempo, variable1, variable2, ...) o long (Tratamiento, Tipo, Variable, Atributo).</div>
+<h2 style="margin:0 0 6px 0;">ANOVA de dos factores: Tratamiento × Factor B (HTML)</h2>
+<div class="muted">
+  Sube Excel/CSV en formato <b>WIDE</b> (tanque, tratamiento, factorB, var1, var2, ...) o <b>LONG</b> (Tratamiento, FactorB, Atributo, Variable).
+</div>
 
 <div class="row" style="margin-top:14px;">
   <div class="card">
@@ -40,15 +40,15 @@
   <div class="card">
     <h3>2) Mapeo columnas</h3>
 
-    <label>Columna Tratamiento</label><br/>
+    <label>Columna Tratamiento (Factor A)</label><br/>
     <select id="colTrat"></select><br/><br/>
 
-    <label>Columna Tipo (ej: tiempo)</label><br/>
-    <select id="colTipo"></select><br/><br/>
+    <label>Columna Factor secundario (Factor B: tiempo, temperatura, condición, etc.)</label><br/>
+    <select id="colFactorB"></select><br/><br/>
 
     <label>Modo de datos</label><br/>
     <select id="dataMode">
-      <option value="wide">WIDE (variable1, variable2, ...)</option>
+      <option value="wide">WIDE (var1, var2, ...)</option>
       <option value="long">LONG (Atributo + Variable ya vienen)</option>
     </select><br/><br/>
 
@@ -71,8 +71,9 @@
 
     <button id="btnPlot" disabled>Generar gráfico</button>
     <div id="plotMsg" class="muted" style="margin-top:8px;"></div>
+
     <div class="muted" style="margin-top:8px;">
-      Requisito: ≥2 niveles en Tratamiento y en Tipo.
+      Requisito: ≥2 niveles en Tratamiento y en Factor B.
     </div>
   </div>
 </div>
@@ -83,7 +84,7 @@
 
 <script>
 let raw = [];
-let longDF = []; // {Tratamiento, Tipo, Atributo, Variable}
+let longDF = []; // {Tratamiento, FactorB, Atributo, Variable}
 
 const fileMsg = document.getElementById("fileMsg");
 const prepMsg = document.getElementById("prepMsg");
@@ -135,7 +136,7 @@ document.getElementById("fileInput").addEventListener("change", (e) => {
 
       const cols = Object.keys(raw[0]);
       setSelectOptions(document.getElementById("colTrat"), cols);
-      setSelectOptions(document.getElementById("colTipo"), cols);
+      setSelectOptions(document.getElementById("colFactorB"), cols);
       setSelectOptions(document.getElementById("colAtrib"), cols);
       setSelectOptions(document.getElementById("colValue"), cols);
 
@@ -158,52 +159,48 @@ btnBuild.addEventListener("click", () => {
     longDF = [];
 
     const cTrat = document.getElementById("colTrat").value;
-    const cTipo = document.getElementById("colTipo").value;
+    const cFB   = document.getElementById("colFactorB").value;
 
-    if (!cTrat || !cTipo) throw new Error("Selecciona columnas Tratamiento y Tipo.");
+    if (!cTrat || !cFB) throw new Error("Selecciona columnas Tratamiento (A) y Factor B.");
 
     if (dataMode.value === "wide") {
-      // wide: todas las columnas excepto trat/tipo serán atributos
       const cols = Object.keys(raw[0]);
-      const attrCols = cols.filter(c => c !== cTrat && c !== cTipo);
+      const attrCols = cols.filter(c => c !== cTrat && c !== cFB);
 
-      if (attrCols.length === 0) throw new Error("No hay columnas de variables (wide) para pivotear.");
+      if (attrCols.length === 0) throw new Error("No hay columnas de variables (WIDE) para pivotear.");
 
       raw.forEach(r => {
         const trat = r[cTrat];
-        const tipo = r[cTipo];
+        const fb   = r[cFB];
         attrCols.forEach(a => {
           longDF.push({
             Tratamiento: trat,
-            Tipo: tipo,
+            FactorB: fb,
             Atributo: a,
             Variable: toNum(r[a])
           });
         });
       });
     } else {
-      // long: usuario indica Atributo y Variable
       const cAtrib = document.getElementById("colAtrib").value;
       const cVal   = document.getElementById("colValue").value;
       if (!cAtrib || !cVal) throw new Error("Selecciona columnas Atributo y Variable.");
       raw.forEach(r => {
         longDF.push({
           Tratamiento: r[cTrat],
-          Tipo: r[cTipo],
+          FactorB: r[cFB],
           Atributo: r[cAtrib],
           Variable: toNum(r[cVal])
         });
       });
     }
 
-    // limpiar NA y tipos
     longDF = longDF.filter(d =>
-      d.Tratamiento != null && d.Tipo != null && d.Atributo != null && Number.isFinite(d.Variable)
+      d.Tratamiento != null && d.FactorB != null && d.Atributo != null && Number.isFinite(d.Variable)
     );
 
-    if (!longDF.length) throw new Error("Tras preparar, no quedaron filas válidas (revisa valores numéricos).");
+    if (!longDF.length) throw new Error("No quedaron filas válidas (revisa valores numéricos).");
 
-    // atributos disponibles
     const attrs = [...new Set(longDF.map(d => String(d.Atributo)))].sort();
     setSelectOptions(document.getElementById("attrSel"), attrs);
 
@@ -224,23 +221,19 @@ btnPlot.addEventListener("click", () => {
 
     const data2 = longDF.filter(d => String(d.Atributo) === String(attr));
 
-    // validación niveles
     const trats = [...new Set(data2.map(d => String(d.Tratamiento)))];
-    const tipos = [...new Set(data2.map(d => String(d.Tipo)))];
-    if (trats.length < 2 || tipos.length < 2) {
-      throw new Error("Se requieren ≥2 niveles en Tratamiento y Tipo para este atributo.");
+    const fbs   = [...new Set(data2.map(d => String(d.FactorB)))];
+    if (trats.length < 2 || fbs.length < 2) {
+      throw new Error("Se requieren ≥2 niveles en Tratamiento y Factor B para este atributo.");
     }
 
-    // stats por celda (Tratamiento×Tipo)
     const cellStats = computeCellStats(data2);
 
-    // offsets tipo R
     const vals = data2.map(d => d.Variable);
     let rng = (Math.max(...vals) - Math.min(...vals));
     if (!isFinite(rng) || rng === 0) rng = Math.max(1, Math.abs(mean(vals))*0.1);
 
     const TOP_OFF = 0.06 * rng;
-    const LET_OFF = 0.12 * rng; // reservado si luego quieres letras
     const BOT_OFF = 0.06 * rng;
 
     cellStats.forEach(s => {
@@ -252,44 +245,21 @@ btnPlot.addEventListener("click", () => {
     });
 
     const y_low  = Math.min(...cellStats.map(s => s.y_min - BOT_OFF*2));
-    const y_high = Math.max(...cellStats.map(s => s.y_max + TOP_OFF*3 + LET_OFF*1.1));
+    const y_high = Math.max(...cellStats.map(s => s.y_max + TOP_OFF*3));
 
-    // --------- Plotly: boxplots (x=Tratamiento, color=Tipo) ----------
-    const traces = buildBoxTraces(data2, trats, tipos);
-
-    // Punto de media por celda (scatter)
-    const meanPts = buildMeanPoints(cellStats, trats, tipos);
-
-    // Textos: median/mean arriba, n/cv/sd abajo
-    const textTraces = buildTextTraces(cellStats, trats, tipos);
-
-    // “labels” a la izquierda
+    const traces = buildBoxTraces(data2, fbs);
+    const meanPts = buildMeanPoints(cellStats, fbs);
+    const textTraces = buildTextTraces(cellStats);
     const leftLabels = buildLeftLabels(cellStats);
 
-    // Subtítulo con tests (aprox)
-    const subtxt = buildSubtitleApprox(data2);
-
     const layout = {
-      title: {
-        text: `ANOVA de dos factores: Tratamiento × Tipo<br><span style="font-size:12px;">${subtxt}</span>`,
-        x: 0.5
-      },
+      title: { text: `ANOVA de dos factores: Tratamiento × Factor B<br><span style="font-size:12px;">(Visual + descriptivos)</span>`, x: 0.5 },
       paper_bgcolor: "white",
       plot_bgcolor: "white",
-      xaxis: {
-        title: "Tratamiento",
-        showline: true, linewidth: 1, linecolor: "#111",
-        tickcolor: "#111"
-      },
-      yaxis: {
-        title: attr,
-        range: [y_low, y_high],
-        showline: true, linewidth: 1, linecolor: "#111",
-        tickcolor: "#111",
-        gridcolor: "#eaeaea"
-      },
+      xaxis: { title: "Tratamiento (Factor A)", showline:true, linewidth:1, linecolor:"#111", tickcolor:"#111" },
+      yaxis: { title: attr, range:[y_low, y_high], showline:true, linewidth:1, linecolor:"#111", tickcolor:"#111", gridcolor:"#eaeaea" },
       boxmode: "group",
-      legend: { orientation: "v", x: 1.02, y: 1 },
+      legend: { orientation: "v", x: 1.02, y: 1, title: {text: "Factor B"} },
       margin: { t: 90, r: 140, b: 60, l: 80 }
     };
 
@@ -305,48 +275,25 @@ btnPlot.addEventListener("click", () => {
   }
 });
 
-function buildBoxTraces(data2, trats, tipos) {
-  // Un trace por Tipo, con x=Tratamiento y y=valores
-  const traces = tipos.map(tipo => {
+function buildBoxTraces(data2, fbs) {
+  // Un trace por nivel del Factor B
+  return fbs.map(fb => {
     const x = [];
     const y = [];
     data2.forEach(d => {
-      if (String(d.Tipo) === String(tipo)) {
+      if (String(d.FactorB) === String(fb)) {
         x.push(String(d.Tratamiento));
         y.push(d.Variable);
       }
     });
-    return {
-      type: "box",
-      name: String(tipo),
-      x, y,
-      boxpoints: false,
-      marker: {opacity: 0.85},
-      line: {width: 1},
-      whiskerwidth: 0.7
-    };
+    return { type:"box", name:String(fb), x, y, boxpoints:false, marker:{opacity:0.85}, line:{width:1} };
   });
-  return traces;
 }
 
-function buildMeanPoints(cellStats, trats, tipos) {
-  // Scatter con mean en cada celda, ajustando jitter x por tipo
-  const dx = 0.20; // separación horizontal por tipo (aprox a position_dodge)
-  const x = [];
-  const y = [];
-  const text = [];
-
-  const tIndex = new Map(tipos.map((t,i)=>[String(t), i]));
-  const mid = (tipos.length - 1) / 2;
-
-  cellStats.forEach(s => {
-    const i = tIndex.get(String(s.Tipo));
-    const offset = (i - mid) * dx;
-    x.push(String(s.Tratamiento));
-    y.push(s.mean);
-    text.push(`mean=${round(s.mean,2)}<br>${s.Tratamiento} | ${s.Tipo}`);
-    s._xOffset = offset; // guardo offset para textos también
-  });
+function buildMeanPoints(cellStats, fbs) {
+  const x = cellStats.map(s => String(s.Tratamiento));
+  const y = cellStats.map(s => s.mean);
+  const text = cellStats.map(s => `mean=${round(s.mean,2)}<br>${s.Tratamiento} | ${s.FactorB}`);
 
   return {
     type: "scatter",
@@ -358,21 +305,13 @@ function buildMeanPoints(cellStats, trats, tipos) {
   };
 }
 
-function buildTextTraces(cellStats, trats, tipos) {
-  // Construye 5 capas: median, mean (arriba), n, cv, sd (abajo)
-  // Para “dodge”, uso x con offset vía xaxis 'category' no se puede sumar; se simula con annotations?
-  // Solución: usar annotations (más estable) -> aquí lo hago como 1 trace scatter por capa, con x como categoría
-  // y muevo ligeramente con 'xshift' en annotations. Plotly trace no soporta xshift por punto.
-  // Entonces: uso layout.annotations en vez de traces. Pero aquí te lo dejo como “scatter text” sin dodge fino:
-  // queda bien si no hay demasiados tipos. Para dodge perfecto, pídeme y lo paso a annotations.
-
+function buildTextTraces(cellStats) {
   const layers = [];
 
-  function mkLayer(name, yKey, labelFn, size) {
+  function mkLayer(yKey, labelFn, size) {
     return {
       type: "scatter",
       mode: "text",
-      name,
       showlegend: false,
       x: cellStats.map(s => String(s.Tratamiento)),
       y: cellStats.map(s => s[yKey]),
@@ -382,74 +321,49 @@ function buildTextTraces(cellStats, trats, tipos) {
     };
   }
 
-  layers.push(mkLayer("median", "y_top_median", s => round(s.median,2), 12));
-  layers.push(mkLayer("mean_txt", "y_top_mean", s => round(s.mean,2), 12));
-  layers.push(mkLayer("n", "y_bot_n", s => String(s.n), 12));
-  layers.push(mkLayer("cv", "y_bot_cv", s => round(s.cv,1), 11));
-  layers.push(mkLayer("sd", "y_bot_sd", s => round(s.sd,2), 11));
+  layers.push(mkLayer("y_top_median", s => round(s.median,2), 12));
+  layers.push(mkLayer("y_top_mean",   s => round(s.mean,2),   12));
+  layers.push(mkLayer("y_bot_n",      s => String(s.n),       12));
+  layers.push(mkLayer("y_bot_cv",     s => round(s.cv,1),     11));
+  layers.push(mkLayer("y_bot_sd",     s => round(s.sd,2),     11));
 
   return layers;
 }
 
 function buildLeftLabels(cellStats) {
-  // “median mean n cv sd” a la izquierda, usando x = primer tratamiento
-  const x0 = cellStats[0]?.Tratamiento != null ? String(cellStats[0].Tratamiento) : "";
+  const x0 = String(cellStats[0].Tratamiento);
   const yTopMed = Math.max(...cellStats.map(s => s.y_top_median));
   const yTopMean= Math.max(...cellStats.map(s => s.y_top_mean));
   const yBotN   = Math.min(...cellStats.map(s => s.y_bot_n));
   const yBotCV  = Math.min(...cellStats.map(s => s.y_bot_cv));
   const yBotSD  = Math.min(...cellStats.map(s => s.y_bot_sd));
 
-  // Usar scatter text en x = primer tratamiento; visualmente queda “a la izquierda”
   return [
     {type:"scatter", mode:"text", showlegend:false, x:[x0], y:[yTopMed], text:["median"], textfont:{size:11}},
-    {type:"scatter", mode:"text", showlegend:false, x:[x0], y:[yTopMean], text:["mean"],   textfont:{size:11}},
-    {type:"scatter", mode:"text", showlegend:false, x:[x0], y:[yBotN],    text:["n"],      textfont:{size:11}},
-    {type:"scatter", mode:"text", showlegend:false, x:[x0], y:[yBotCV],   text:["cv"],     textfont:{size:11}},
-    {type:"scatter", mode:"text", showlegend:false, x:[x0], y:[yBotSD],   text:["sd"],     textfont:{size:11}}
+    {type:"scatter", mode:"text", showlegend:false, x:[x0], y:[yTopMean],text:["mean"],   textfont:{size:11}},
+    {type:"scatter", mode:"text", showlegend:false, x:[x0], y:[yBotN],   text:["n"],      textfont:{size:11}},
+    {type:"scatter", mode:"text", showlegend:false, x:[x0], y:[yBotCV],  text:["cv"],     textfont:{size:11}},
+    {type:"scatter", mode:"text", showlegend:false, x:[x0], y:[yBotSD],  text:["sd"],     textfont:{size:11}}
   ];
 }
 
-function buildSubtitleApprox(data2) {
-  // Shapiro sobre valores centrados por celda (aprox a residuals)
-  const byCell = groupBy(data2, d => `${d.Tratamiento}|${d.Tipo}`);
-  const residualLike = [];
-  Object.values(byCell).forEach(arr => {
-    const m = mean(arr.map(a=>a.Variable));
-    arr.forEach(a => residualLike.push(a.Variable - m));
-  });
-  const pShapiro = shapiroP(residualLike);
-
-  // Levene sobre grupos por celda
-  const pLevene = leveneP(byCell);
-
-  // “ANOVA” aproximado (two-way) -> usamos F-tests básicos por modelos anidados (muy simplificado)
-  // Aquí solo mostramos NA si no queremos vender humo:
-  const pTrat = "NA";
-  const pTipo = "NA";
-  const pInt  = "NA";
-
-  return `Aprox | Shapiro p=${fmt(pShapiro)} | Levene p=${fmt(pLevene)} | p(Trat)=${pTrat} | p(Tipo)=${pTipo} | p(Int)=${pInt}`;
-}
-
 function computeCellStats(data2) {
-  const g = groupBy(data2, d => `${d.Tratamiento}|${d.Tipo}`);
+  const g = groupBy(data2, d => `${d.Tratamiento}|${d.FactorB}`);
   const out = [];
   Object.entries(g).forEach(([key, arr]) => {
-    const [trat, tipo] = key.split("|");
+    const [trat, fb] = key.split("|");
     const v = arr.map(a => a.Variable).filter(Number.isFinite);
     const n = v.length;
     const m = mean(v);
     const med = median(v);
     const sd = std(v);
     const cv = (m !== 0 && isFinite(m)) ? (100*sd/m) : NaN;
-    const y_min = Math.min(...v);
-    const y_max = Math.max(...v);
     out.push({
       Tratamiento: trat,
-      Tipo: tipo,
+      FactorB: fb,
       n, mean: m, median: med, sd, cv,
-      y_min, y_max
+      y_min: Math.min(...v),
+      y_max: Math.max(...v)
     });
   });
   return out;
@@ -481,10 +395,6 @@ function round(x,d){
   const p = Math.pow(10,d);
   return (Math.round(x*p)/p).toFixed(d);
 }
-function fmt(x){
-  if (!isFinite(x)) return "NA";
-  return Number(x).toFixed(3);
-}
 function toNum(x){
   if (x == null || x === "") return NaN;
   const v = Number(x);
@@ -502,23 +412,6 @@ function csvToJson(text) {
     out.push(row);
   }
   return out;
-}
-
-// --- Shapiro (aprox) ---
-function shapiroP(values){
-  // Implementación completa de Shapiro en JS es larga.
-  // Para no “vender humo”, devolvemos NA si n es grande o si hay pocos datos.
-  const v = values.filter(Number.isFinite);
-  if (v.length < 10 || v.length > 5000) return NaN;
-  // Heurística simple: normaltest de D’Agostino-K² sería más fácil, pero también requiere implementación.
-  // Dejo NA por honestidad. (Si quieres, lo implemento con una librería JS).
-  return NaN;
-}
-
-// --- Levene (aprox) ---
-function leveneP(groupObj){
-  // Levene: ANOVA sobre |x - mediana_grupo|. Aquí devolvemos NA para mantenerlo simple y honesto.
-  return NaN;
 }
 </script>
 
